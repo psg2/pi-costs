@@ -6,7 +6,28 @@ import { analyzeSessions, discoverSessions } from "../parser";
 
 let tempDir: string;
 
+/** Format a Date as the pi session filename timestamp: 2026-02-09T12-00-00-000Z */
+function toFilenameTs(date: Date): string {
+	return date.toISOString().replace(/[:.]/g, "-");
+}
+
+/** Format a Date as ISO for JSON fields: 2026-02-09T12:00:00.000Z */
+function toJsonTs(date: Date): string {
+	return date.toISOString();
+}
+
+// Relative dates so tests don't expire
+const NOW = new Date();
+const TODAY = new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate(), 12, 0, 0);
+const YESTERDAY = new Date(TODAY.getTime() - 86400_000);
+const LONG_AGO = new Date("2020-01-01T00:00:00.000Z");
+
+// Day strings for assertions
+const TODAY_STR = TODAY.toISOString().slice(0, 10);
+const YESTERDAY_STR = YESTERDAY.toISOString().slice(0, 10);
+
 function makeSessionFile(
+	timestamp: Date,
 	messages: Array<{
 		model?: string;
 		provider?: string;
@@ -20,28 +41,26 @@ function makeSessionFile(
 			type: "session",
 			version: 3,
 			id: "test-session",
-			timestamp: "2026-02-09T12:00:00.000Z",
+			timestamp: toJsonTs(timestamp),
 			cwd: "/test",
 		}),
 	];
 
 	for (const msg of messages) {
-		// User message
 		lines.push(
 			JSON.stringify({
 				type: "message",
 				id: "user-1",
-				timestamp: "2026-02-09T12:00:01.000Z",
+				timestamp: toJsonTs(timestamp),
 				message: { role: "user", content: [{ type: "text", text: "hello" }] },
 			}),
 		);
 
-		// Assistant message with usage
 		lines.push(
 			JSON.stringify({
 				type: "message",
 				id: "asst-1",
-				timestamp: "2026-02-09T12:00:02.000Z",
+				timestamp: toJsonTs(timestamp),
 				message: {
 					role: "assistant",
 					content: [{ type: "text", text: "response" }],
@@ -73,38 +92,38 @@ function makeSessionFile(
 beforeAll(async () => {
 	tempDir = await mkdtemp(join(tmpdir(), "pi-costs-test-"));
 
-	// Create project dirs with sessions
 	const proj1 = join(tempDir, "--Users-test-workspace-my-project--");
 	const proj2 = join(tempDir, "--Users-test-workspace-other-project--");
 	await mkdir(proj1, { recursive: true });
 	await mkdir(proj2, { recursive: true });
 
-	// Recent session
+	// Recent session (today)
 	await writeFile(
-		join(proj1, "2026-02-09T12-00-00-000Z_aaaaaaaa-1111-2222-3333-444444444444.jsonl"),
-		makeSessionFile([
+		join(proj1, `${toFilenameTs(TODAY)}_aaaaaaaa-1111-2222-3333-444444444444.jsonl`),
+		makeSessionFile(TODAY, [
 			{ model: "claude-opus-4-5", cost: 0.05 },
 			{ model: "claude-opus-4-5", cost: 0.03 },
 			{ model: "claude-sonnet-4-5", cost: 0.01 },
 		]),
 	);
 
-	// Older session (same project, different day)
+	// Older session (yesterday, same project)
 	await writeFile(
-		join(proj1, "2026-02-08T10-00-00-000Z_bbbbbbbb-1111-2222-3333-444444444444.jsonl"),
-		makeSessionFile([{ model: "claude-opus-4-5", cost: 0.02 }]),
+		join(proj1, `${toFilenameTs(YESTERDAY)}_bbbbbbbb-1111-2222-3333-444444444444.jsonl`),
+		makeSessionFile(YESTERDAY, [{ model: "claude-opus-4-5", cost: 0.02 }]),
 	);
 
-	// Different project
+	// Different project (today)
+	const today2 = new Date(TODAY.getTime() + 7200_000); // +2h so filename differs
 	await writeFile(
-		join(proj2, "2026-02-09T14-00-00-000Z_cccccccc-1111-2222-3333-444444444444.jsonl"),
-		makeSessionFile([{ model: "claude-opus-4-6", cost: 0.04 }]),
+		join(proj2, `${toFilenameTs(today2)}_cccccccc-1111-2222-3333-444444444444.jsonl`),
+		makeSessionFile(today2, [{ model: "claude-opus-4-6", cost: 0.04 }]),
 	);
 
 	// Very old session (should be excluded by default 7-day filter)
 	await writeFile(
-		join(proj1, "2025-01-01T00-00-00-000Z_dddddddd-1111-2222-3333-444444444444.jsonl"),
-		makeSessionFile([{ cost: 1.0 }]),
+		join(proj1, `${toFilenameTs(LONG_AGO)}_dddddddd-1111-2222-3333-444444444444.jsonl`),
+		makeSessionFile(LONG_AGO, [{ cost: 1.0 }]),
 	);
 });
 
@@ -241,13 +260,13 @@ describe("analyzeSessions", () => {
 
 		expect(result.perDay.size).toBe(2);
 
-		const feb9 = result.perDay.get("2026-02-09");
-		expect(feb9).toBeDefined();
-		expect(feb9?.totalCost).toBeCloseTo(0.13); // 0.05+0.03+0.01+0.04
+		const todayStats = result.perDay.get(TODAY_STR);
+		expect(todayStats).toBeDefined();
+		expect(todayStats?.totalCost).toBeCloseTo(0.13); // 0.05+0.03+0.01+0.04
 
-		const feb8 = result.perDay.get("2026-02-08");
-		expect(feb8).toBeDefined();
-		expect(feb8?.totalCost).toBeCloseTo(0.02);
+		const yesterdayStats = result.perDay.get(YESTERDAY_STR);
+		expect(yesterdayStats).toBeDefined();
+		expect(yesterdayStats?.totalCost).toBeCloseTo(0.02);
 	});
 
 	test("produces session rows when requested", async () => {

@@ -1,5 +1,5 @@
-import { readFile, readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { addUsage, createStats, mergeStats } from "./stats";
 import type { Options, SessionInfo, SessionRow, Stats } from "./types";
 
