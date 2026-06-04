@@ -45,6 +45,16 @@ export interface SessionHeader {
 /** Any log line we care about */
 export type LogLine = AssistantMessage | SessionHeader | { type: string };
 
+/** Per-model aggregated stats */
+export interface ModelEntry {
+	requests: number;
+	cost: number;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+}
+
 /** Aggregated stats for a group of requests */
 export interface Stats {
 	totalCost: number;
@@ -57,8 +67,9 @@ export interface Stats {
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
 	requests: number;
-	/** model -> { requests, cost } */
-	models: Map<string, { requests: number; cost: number }>;
+	/** model -> per-model aggregated data */
+	models: Map<string, ModelEntry>;
+
 }
 
 /** CLI options */
@@ -68,6 +79,8 @@ export interface Options {
 	showSessions: boolean;
 	showDaily: boolean;
 	sessionsDir: string;
+	/** Path to a JSON pricing override file */
+	pricingPath?: string;
 }
 
 /** A parsed session with its metadata */
@@ -85,5 +98,7 @@ export interface SessionRow {
 	cost: number;
 	inputTokens: number;
 	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
 	models: string;
 }

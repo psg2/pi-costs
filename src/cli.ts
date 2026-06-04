@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { renderReport } from "./format";
 import { analyzeSessions, discoverSessions } from "./parser";
+import { loadPricing } from "./pricing";
 import type { Options } from "./types";
 
 const HELP = `pi-costs — Analyze cost and token usage from pi coding agent sessions
@@ -21,9 +22,11 @@ Options:
   --project <name>  Filter projects by substring (case-insensitive)
   --sessions        Show individual session breakdown
   --daily           Show per-day breakdown
+  --pricing <path>  JSON file with per-model pricing overrides (default: ~/.pi/pi-costs-pricing.json)
+                    Automatically applied when cost data is missing (e.g. GitHub Copilot provider)
+                    Format: { "model-name": { "input": 3.0, "cachedInput": 0.3, "cacheWrite": 3.75, "output": 15.0 } }
   --dir <path>      Custom sessions directory (default: ~/.pi/agent/sessions)
   -h, --help        Show this help
-  -v, --version     Show version
 `;
 
 function parseArgs(args: string[]): Options {
@@ -52,6 +55,9 @@ function parseArgs(args: string[]): Options {
 				break;
 			case "--dir":
 				opts.sessionsDir = args[++i] ?? opts.sessionsDir;
+				break;
+			case "--pricing":
+				opts.pricingPath = args[++i];
 				break;
 			case "-h":
 			case "--help":
@@ -87,7 +93,8 @@ async function main(): Promise<void> {
 		process.exit(0);
 	}
 
-	const result = await analyzeSessions(sessions, opts.showSessions);
+	const pricing = loadPricing(opts.pricingPath);
+	const result = await analyzeSessions(sessions, opts.showSessions, pricing);
 
 	const period = opts.days > 0 ? `last ${opts.days} days` : "all time";
 	const report = renderReport({

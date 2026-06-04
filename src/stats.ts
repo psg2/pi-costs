@@ -1,4 +1,6 @@
-import type { Stats, Usage } from "./types";
+import { computeCost, lookupPricing } from "./pricing";
+import type { PricingTable } from "./pricing";
+import type { ModelEntry, Stats, Usage } from "./types";
 
 export function createStats(): Stats {
 	return {
@@ -16,9 +18,30 @@ export function createStats(): Stats {
 	};
 }
 
-export function addUsage(stats: Stats, usage: Usage, model: string): void {
-	const cost = usage.cost ?? {};
-	const total = cost.total ?? 0;
+export function addUsage(
+	stats: Stats,
+	usage: Usage,
+	model: string,
+	pricing?: PricingTable,
+): void {
+	let cost = usage.cost ?? {};
+	let total = cost.total ?? 0;
+
+	// When API response has no cost (e.g. GitHub Copilot provider), compute from pricing table
+	if (total === 0 && pricing) {
+		const p = lookupPricing(model, pricing);
+		if (p) {
+			const computed = computeCost(
+				usage.input ?? 0,
+				usage.output ?? 0,
+				usage.cacheRead ?? 0,
+				usage.cacheWrite ?? 0,
+				p,
+			);
+			cost = computed;
+			total = computed.total;
+		}
+	}
 
 	stats.totalCost += total;
 	stats.costInput += cost.input ?? 0;
@@ -31,9 +54,20 @@ export function addUsage(stats: Stats, usage: Usage, model: string): void {
 	stats.cacheWriteTokens += usage.cacheWrite ?? 0;
 	stats.requests += 1;
 
-	const entry = stats.models.get(model) ?? { requests: 0, cost: 0 };
+	const entry = stats.models.get(model) ?? {
+		requests: 0,
+		cost: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+	};
 	entry.requests += 1;
 	entry.cost += total;
+	entry.inputTokens += usage.input ?? 0;
+	entry.outputTokens += usage.output ?? 0;
+	entry.cacheReadTokens += usage.cacheRead ?? 0;
+	entry.cacheWriteTokens += usage.cacheWrite ?? 0;
 	stats.models.set(model, entry);
 }
 
@@ -49,10 +83,21 @@ export function mergeStats(target: Stats, source: Stats): void {
 	target.cacheWriteTokens += source.cacheWriteTokens;
 	target.requests += source.requests;
 
-	for (const [model, { requests, cost }] of source.models) {
-		const entry = target.models.get(model) ?? { requests: 0, cost: 0 };
-		entry.requests += requests;
-		entry.cost += cost;
+	for (const [model, src] of source.models) {
+		const entry = target.models.get(model) ?? {
+			requests: 0,
+			cost: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+		};
+		entry.requests += src.requests;
+		entry.cost += src.cost;
+		entry.inputTokens += src.inputTokens;
+		entry.outputTokens += src.outputTokens;
+		entry.cacheReadTokens += src.cacheReadTokens;
+		entry.cacheWriteTokens += src.cacheWriteTokens;
 		target.models.set(model, entry);
 	}
 }
