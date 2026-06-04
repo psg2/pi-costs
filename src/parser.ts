@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { PricingTable } from "./pricing";
 import { addUsage, createStats, mergeStats } from "./stats";
 import type { Options, SessionInfo, SessionRow, Stats } from "./types";
 
@@ -80,7 +81,7 @@ export async function discoverSessions(opts: Options): Promise<SessionInfo[]> {
 }
 
 /** Parse a single session file and return its aggregated stats */
-async function parseSession(filepath: string): Promise<Stats> {
+async function parseSession(filepath: string, pricing?: PricingTable): Promise<Stats> {
 	const stats = createStats();
 	const text = await readFile(filepath, "utf-8");
 
@@ -102,7 +103,7 @@ async function parseSession(filepath: string): Promise<Stats> {
 		if (!usage) continue;
 
 		const model = (msg.model as string) ?? "unknown";
-		addUsage(stats, usage as never, model);
+		addUsage(stats, usage as never, model, pricing);
 	}
 
 	return stats;
@@ -121,6 +122,7 @@ export interface AnalysisResult {
 export async function analyzeSessions(
 	sessions: SessionInfo[],
 	showSessions: boolean,
+	pricing?: PricingTable,
 ): Promise<AnalysisResult> {
 	const totals = createStats();
 	const perProject = new Map<string, Stats>();
@@ -129,7 +131,7 @@ export async function analyzeSessions(
 	let sessionCount = 0;
 
 	for (const { filepath, project, timestamp } of sessions) {
-		const sessionStats = await parseSession(filepath);
+		const sessionStats = await parseSession(filepath, pricing);
 		if (sessionStats.requests === 0) continue;
 
 		sessionCount++;
@@ -147,7 +149,7 @@ export async function analyzeSessions(
 		perDay.set(dayKey, dayStats);
 
 		if (showSessions) {
-			const short = shortProjectName(project, 18);
+			const short = shortProjectName(project, 999);
 			const modelsStr = [...sessionStats.models.entries()]
 				.sort((a, b) => b[1].requests - a[1].requests)
 				.map(([m]) => m)
@@ -158,9 +160,10 @@ export async function analyzeSessions(
 				project: short,
 				requests: sessionStats.requests,
 				cost: sessionStats.totalCost,
-				inputTokens:
-					sessionStats.inputTokens + sessionStats.cacheReadTokens + sessionStats.cacheWriteTokens,
+				inputTokens: sessionStats.inputTokens,
 				outputTokens: sessionStats.outputTokens,
+				cacheReadTokens: sessionStats.cacheReadTokens,
+				cacheWriteTokens: sessionStats.cacheWriteTokens,
 				models: modelsStr,
 			});
 		}

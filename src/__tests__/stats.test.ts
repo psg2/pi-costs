@@ -51,8 +51,16 @@ describe("addUsage", () => {
 		addUsage(stats, makeUsage({ cost: { ...makeUsage().cost, total: 0.01 } }), "sonnet");
 		addUsage(stats, makeUsage({ cost: { ...makeUsage().cost, total: 0.03 } }), "opus");
 
-		expect(stats.models.get("opus")).toEqual({ requests: 2, cost: 0.08 });
-		expect(stats.models.get("sonnet")).toEqual({ requests: 1, cost: 0.01 });
+		const opus = stats.models.get("opus")!;
+		const sonnet = stats.models.get("sonnet")!;
+		expect(opus.requests).toBe(2);
+		expect(opus.cost).toBeCloseTo(0.08);
+		expect(opus.inputTokens).toBe(200);
+		expect(opus.outputTokens).toBe(100);
+		expect(opus.cacheReadTokens).toBe(400);
+		expect(opus.cacheWriteTokens).toBe(600);
+		expect(sonnet.requests).toBe(1);
+		expect(sonnet.cost).toBeCloseTo(0.01);
 	});
 });
 

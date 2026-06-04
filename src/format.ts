@@ -1,4 +1,4 @@
-import type { Stats } from "./types";
+import type { ModelEntry, Stats } from "./types";
 
 export function fmtCost(v: number): string {
 	return `$${v.toFixed(4)}`;
@@ -23,7 +23,7 @@ export function renderReport(opts: {
 	projectFilter: string;
 	totals: Stats;
 	sessionCount: number;
-	perModel: Map<string, { requests: number; cost: number }>;
+	perModel: Map<string, ModelEntry>;
 	perProject: Map<string, Stats>;
 	perDay: Map<string, Stats>;
 	showDaily: boolean;
@@ -34,6 +34,8 @@ export function renderReport(opts: {
 		cost: number;
 		inputTokens: number;
 		outputTokens: number;
+		cacheReadTokens: number;
+		cacheWriteTokens: number;
 		models: string;
 	}>;
 	showSessions: boolean;
@@ -68,34 +70,50 @@ export function renderReport(opts: {
 
 	// By Model
 	if (perModel.size > 0) {
+		const termWidth = process.stdout.columns ?? (process.env.COLUMNS ? Number(process.env.COLUMNS) : 120);
+		// Cols: 2(indent) + name(var) + Cost(10) + Reqs(8) + In(10) + Out(10) + CR(10) + CW(10) = 58 fixed
+		const modelNames = [...perModel.keys()];
+		const maxName = Math.max(...modelNames.map((m) => m.length));
+		const nameCol = Math.min(maxName, Math.max(25, termWidth - 2 - 58));
+		const mSep = "─".repeat(nameCol + 58);
 		ln();
-		ln(`  ${SEP}`);
+		ln(`  ${mSep}`);
 		ln("  By Model:");
-		ln(`  ${pad("Model", 45)}${pad("Cost", 10, "right")}${pad("Requests", 10, "right")}`);
-		ln(`  ${SEP}`);
+		ln(
+			`  ${pad("Model", nameCol)}${pad("Cost", 10, "right")}${pad("Reqs", 8, "right")}${pad("In", 10, "right")}${pad("Out", 10, "right")}${pad("CR", 10, "right")}${pad("CW", 10, "right")}`,
+		);
+		ln(`  ${mSep}`);
 
 		const sorted = [...perModel.entries()].sort((a, b) => b[1].cost - a[1].cost);
-		for (const [model, { requests, cost }] of sorted) {
+		for (const [model, e] of sorted) {
+			const name = model.length > nameCol ? `…${model.slice(-(nameCol - 1))}` : model;
 			ln(
-				`  ${pad(model, 45)}${pad(fmtCost(cost), 10, "right")}${pad(String(requests), 10, "right")}`,
+				`  ${pad(name, nameCol)}${pad(fmtCost(e.cost), 10, "right")}${pad(String(e.requests), 8, "right")}${pad(fmtTokens(e.inputTokens), 10, "right")}${pad(fmtTokens(e.outputTokens), 10, "right")}${pad(fmtTokens(e.cacheReadTokens), 10, "right")}${pad(fmtTokens(e.cacheWriteTokens), 10, "right")}`,
 			);
 		}
 	}
 
 	// By Project
 	if (perProject.size > 1) {
+		const termWidth = process.stdout.columns ?? (process.env.COLUMNS ? Number(process.env.COLUMNS) : 120);
+		const projNames = [...perProject.keys()].map((p) => p.split("/").filter(Boolean).pop() ?? p);
+		const maxName = Math.max(...projNames.map((n) => n.length));
+		const nameCol = Math.min(maxName, Math.max(25, termWidth - 2 - 58));
+		const pSep = "─".repeat(nameCol + 58);
 		ln();
-		ln(`  ${SEP}`);
+		ln(`  ${pSep}`);
 		ln("  By Project:");
-		ln(`  ${pad("Project", 45)}${pad("Cost", 10, "right")}${pad("Requests", 10, "right")}`);
-		ln(`  ${SEP}`);
+		ln(
+			`  ${pad("Project", nameCol)}${pad("Cost", 10, "right")}${pad("Reqs", 8, "right")}${pad("In", 10, "right")}${pad("Out", 10, "right")}${pad("CR", 10, "right")}${pad("CW", 10, "right")}`,
+		);
+		ln(`  ${pSep}`);
 
 		const sorted = [...perProject.entries()].sort((a, b) => b[1].totalCost - a[1].totalCost);
 		for (const [proj, stats] of sorted) {
-			let short = proj.split("/").filter(Boolean).pop() ?? proj;
-			if (short.length > 43) short = `…${short.slice(-42)}`;
+			const raw = proj.split("/").filter(Boolean).pop() ?? proj;
+			const name = raw.length > nameCol ? `…${raw.slice(-(nameCol - 1))}` : raw;
 			ln(
-				`  ${pad(short, 45)}${pad(fmtCost(stats.totalCost), 10, "right")}${pad(String(stats.requests), 10, "right")}`,
+				`  ${pad(name, nameCol)}${pad(fmtCost(stats.totalCost), 10, "right")}${pad(String(stats.requests), 8, "right")}${pad(fmtTokens(stats.inputTokens), 10, "right")}${pad(fmtTokens(stats.outputTokens), 10, "right")}${pad(fmtTokens(stats.cacheReadTokens), 10, "right")}${pad(fmtTokens(stats.cacheWriteTokens), 10, "right")}`,
 			);
 		}
 	}
@@ -121,21 +139,25 @@ export function renderReport(opts: {
 
 	// Per Session
 	if (opts.showSessions && sessionRows.length > 0) {
-		const SW = 90;
+		// Fixed cols: 2(indent) + 18(time) + 6(reqs) + 10(cost) + 9(in) + 9(out) + 9(cr) + 9(cw) + 2(model gap) = 74
+		const termWidth = process.stdout.columns ?? (process.env.COLUMNS ? Number(process.env.COLUMNS) : 120);
+		const maxProjName = Math.max(...sessionRows.map((r) => r.project.length));
+		const projColWidth = Math.min(maxProjName, Math.max(18, termWidth - 74 - 18));
+		const SW = 2 + 18 + projColWidth + 6 + 10 + 9 + 9 + 9 + 9 + 2 + 5;
 		const sSep = "─".repeat(SW);
 		ln();
 		ln(`  ${sSep}`);
 		ln("  Sessions:");
 		ln(
-			`  ${pad("Time", 18)}${pad("Project", 20)}${pad("Reqs", 6, "right")}${pad("Cost", 10, "right")}${pad("In Tok", 10, "right")}${pad("Out Tok", 10, "right")}  Model`,
+			`  ${pad("Time", 18)}${pad("Project", projColWidth + 2)}${pad("Reqs", 6, "right")}${pad("Cost", 10, "right")}${pad("In", 9, "right")}${pad("Out", 9, "right")}${pad("CR", 9, "right")}${pad("CW", 9, "right")}  Model`,
 		);
 		ln(`  ${sSep}`);
 
 		for (const row of sessionRows) {
 			let proj = row.project;
-			if (proj.length > 18) proj = `…${proj.slice(-17)}`;
+			if (proj.length > projColWidth) proj = `…${proj.slice(-(projColWidth - 1))}`;
 			ln(
-				`  ${pad(row.time, 18)}${pad(proj, 20)}${pad(String(row.requests), 6, "right")}${pad(fmtCost(row.cost), 10, "right")}${pad(fmtTokens(row.inputTokens), 10, "right")}${pad(fmtTokens(row.outputTokens), 10, "right")}  ${row.models}`,
+				`  ${pad(row.time, 18)}${pad(proj, projColWidth + 2)}${pad(String(row.requests), 6, "right")}${pad(fmtCost(row.cost), 10, "right")}${pad(fmtTokens(row.inputTokens), 9, "right")}${pad(fmtTokens(row.outputTokens), 9, "right")}${pad(fmtTokens(row.cacheReadTokens), 9, "right")}${pad(fmtTokens(row.cacheWriteTokens), 9, "right")}  ${row.models}`,
 			);
 		}
 	}
